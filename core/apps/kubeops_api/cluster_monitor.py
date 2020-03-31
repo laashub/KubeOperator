@@ -17,7 +17,8 @@ from kubeops_api.cluster_health_data import ClusterHealthData
 from django.utils import timezone
 from ansible_api.models.inventory import Host as C_Host
 from common.ssh import SSHClient, SshConfig
-
+from message_center.message_client import MessageClient
+from kubeops_api.utils.date_encoder import DateEncoder
 
 logger = logging.getLogger('kubeops')
 
@@ -154,6 +155,7 @@ class ClusterMonitor():
         return deployment_list
 
     def set_cluster_data(self):
+        self.check_authorization(3)
         nodes = self.list_nodes()
         pods = self.list_pods()
         namespaces = self.list_namespaces()
@@ -164,17 +166,25 @@ class ClusterMonitor():
         mem_total = 0
         mem_usage = 0
         count = len(nodes)
+        warn_nodes = []
         for n in nodes:
             # 不计算异常node数据
             cpu_total = cpu_total + float(n['cpu'])
             cpu_usage = cpu_usage + float(n['cpu_usage'])
             mem_total = mem_total + float(n['mem'])
             mem_usage = mem_usage + float(n['mem_usage'])
-            if n['cpu_usage'] == 0 and n['mem_usage'] == 0:
+            if float(n['cpu_usage']) == 0 and float(n['mem_usage']) == 0:
                 count = count - 1
+            elif float(n['cpu_usage']) > 0.8 or float(n['mem_usage']) > 0.8:
+                warn_nodes.append(n)
         if count > 0:
             cpu_usage = cpu_usage / count
             mem_usage = mem_usage / count
+        if len(warn_nodes) > 0:
+            message_client = MessageClient()
+            message = self.get_usage_message(warn_nodes)
+            message_client.insert_message(message)
+
         sort_restart_pod_list = quick_sort_pods(self.restart_pods)
         error_pods = quick_sort_pods(self.error_pods)
 
@@ -356,6 +366,9 @@ class ClusterMonitor():
         index = (self.cluster.name + '-{}.{}').format(year, month)
         es_client = log.es.get_es_client()
         for item in event_response.items:
+            # 过滤kubeapps-plus的同步事件
+            if "apprepo-sync-chartmuseum" in item.metadata.name:
+                continue
             component, host = '', ''
             if item.source is not None and item.source.component is not None:
                 component = item.source.component
@@ -388,7 +401,63 @@ class ClusterMonitor():
                     '_source': event.__dict__
                 }
                 actions.append(action)
+                if event.type == 'Warning':
+                    message_client = MessageClient()
+                    message = self.get_event_message(event)
+                    message_client.insert_message(message)
         return events, actions
+
+    def get_event_message(self, event):
+        message = {
+            "item_id": self.cluster.item_id,
+            "title": "集群事件告警",
+            "content": self.get_event_content(event),
+            "level": "WARNING",
+            "type": "CLUSTER"
+        }
+        return message
+
+    def get_event_content(self, event):
+        content = {
+            "item_name": self.cluster.item_name,
+            "resource": "集群",
+            "resource_name": self.cluster.name,
+            "resource_type": 'CLUSTER_EVENT',
+            "detail": json.dumps(event.__dict__, cls=DateEncoder),
+            "status": self.cluster.status,
+        }
+        return content
+
+    def get_usage_message(self, nodes):
+        message = {
+            "item_id": self.cluster.item_id,
+            "title": "集群资源告警",
+            "content": self.get_usage_content(nodes),
+            "level": "WARNING",
+            "type": "CLUSTER"
+        }
+        return message
+
+    def get_usage_content(self, nodes):
+        message = ''
+        for n in nodes:
+            cpu_usage = round(float(n['cpu_usage']),2) * 100
+            mem_usage = round(float(n['mem_usage']),2) * 100
+            m = '主机{0}的CPU使用率为:{1}%,内存使用率为{2}% \n\n'.format(n['name'], cpu_usage, mem_usage)
+            if len(message)>0:
+                message = message +'> '+m
+            else:
+                message = m
+
+        content = {
+            "item_name": self.cluster.item_name,
+            "resource": "集群",
+            "resource_name": self.cluster.name,
+            "resource_type": 'CLUSTER_USAGE',
+            "detail":json.dumps({'message': message}) ,
+            "status": self.cluster.status,
+        }
+        return content
 
 
 def delete_cluster_redis_data(cluster_name):
@@ -556,7 +625,7 @@ def sync_node_time(cluster):
         'data': []
     }
     for host in hosts:
-        ssh_config = SshConfig(host=host.ip, port=host.port, username=host.username, password=host.password, timeout=10,
+        ssh_config = SshConfig(host=host.ip, port=host.port, username=host.username, password=host.password,
                                private_key=None)
 
         ssh_client = SSHClient(ssh_config)

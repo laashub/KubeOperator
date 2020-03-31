@@ -16,6 +16,8 @@ from kubeops_api.models.backup_storage import BackupStorage
 import kubeops_api.cluster_backup_utils
 import kubeops_api.cluster_monitor
 from django.utils import timezone
+from message_center.message_client import MessageClient
+
 __all__ = ['DeployExecution']
 logger = logging.getLogger('kubeops')
 
@@ -36,7 +38,7 @@ class DeployExecution(AbstractProjectResourceModel, AbstractExecutionModel):
         result = {"raw": {}, "summary": {}}
         pre_deploy_execution_start.send(self.__class__, execution=self)
         cluster = self.get_cluster()
-        settings = Setting.get_settings()
+        settings = Setting.get_db_settings()
         extra_vars = {
             "cluster_name": cluster.name,
             "cluster_domain": cluster.cluster_doamin_suffix
@@ -45,6 +47,14 @@ class DeployExecution(AbstractProjectResourceModel, AbstractExecutionModel):
         extra_vars.update(cluster.configs)
         ignore_errors = False
         return_running = False
+        message_client = MessageClient()
+        message = {
+            "item_id": cluster.item_id,
+            "title": self.get_operation_name(),
+            "content": "",
+            "level": "INFO",
+            "type": "SYSTEM"
+        }
         try:
             if self.operation == "install":
                 logger.info(msg="cluster: {} exec: {} ".format(cluster, self.operation))
@@ -96,10 +106,11 @@ class DeployExecution(AbstractProjectResourceModel, AbstractExecutionModel):
                 if not result.get('summary', {}).get('success', False):
                     cluster.exit_new_node()
                 else:
-                    node_name = self.params.get('node', None)
+                    node_names = self.params.get('nodes', None)
                     cluster.change_to()
-                    node = Node.objects.get(name=node_name)
-                    node.delete()
+                    nodes = Node.objects.filter(name__in=node_names)
+                    for node in nodes:
+                        node.delete()
                     cluster.change_status(Cluster.CLUSTER_STATUS_RUNNING)
             elif self.operation == 'restore':
                 logger.info(msg="cluster: {} exec: {} ".format(cluster, self.operation))
@@ -115,14 +126,22 @@ class DeployExecution(AbstractProjectResourceModel, AbstractExecutionModel):
                 self.on_upload_backup_file(cluster_storage_id)
                 cluster.change_status(Cluster.CLUSTER_STATUS_RUNNING)
             if not result.get('summary', {}).get('success', False):
+                message['content'] = self.get_content(False)
+                message['level'] = 'WARNING'
                 if not ignore_errors:
                     cluster.change_status(Cluster.CLUSTER_STATUS_ERROR)
                 if return_running:
                     cluster.change_status(Cluster.CLUSTER_STATUS_RUNNING)
                 logger.error(msg=":cluster {} exec {} error".format(cluster, self.operation), exc_info=True)
+            else:
+                message['content'] = self.get_content(True)
+            message_client.insert_message(message)
         except Exception as e:
             logger.error(msg=":cluster {} exec {} error".format(cluster, self.operation), exc_info=True)
             cluster.change_status(Cluster.CLUSTER_STATUS_ERROR)
+            message['content'] = self.get_content(False)
+            message['level'] = 'WARNING'
+            message_client.insert_message(message)
         post_deploy_execution_start.send(self.__class__, execution=self, result=result, ignore_errors=ignore_errors)
         return result
 
@@ -170,19 +189,20 @@ class DeployExecution(AbstractProjectResourceModel, AbstractExecutionModel):
         cluster = self.get_cluster()
         self.steps = cluster.get_steps('add-worker')
         self.set_step_default()
-        host_name = self.params.get('host', None)
-        host = Host.objects.get(name=host_name)
-        cluster.add_worker(host)
+        host_names = self.params.get('hosts', None)
+        hosts = Host.objects.filter(name__in=host_names)
+        cluster.add_worker(hosts)
         return self.run_playbooks(extra_vars)
 
     def on_remove_worker(self, extra_vars):
         cluster = self.get_cluster()
         self.steps = cluster.get_steps('remove-worker')
         self.set_step_default()
-        node_name = self.params.get('node', None)
+        node_names = self.params.get('nodes', None)
         cluster.change_to()
-        node = Node.objects.get(name=node_name)
-        node.set_groups(['new_node', 'worker'])
+        nodes = Node.objects.filter(name__in=node_names)
+        for node in nodes:
+            node.set_groups(['new_node', 'worker'])
         return self.run_playbooks(extra_vars)
 
     def on_uninstall(self, extra_vars):
@@ -284,3 +304,36 @@ class DeployExecution(AbstractProjectResourceModel, AbstractExecutionModel):
     class Meta:
         get_latest_by = 'date_created'
         ordering = ('-date_created',)
+
+    def get_operation_name(self):
+        operation_name = {
+            "install": "集群安装",
+            "uninstall": "集群卸载",
+            "upgrade": "集群升级",
+            "scale": "集群伸缩",
+            "add-worker": "集群伸缩",
+            "remove-worker": "集群安装",
+            "restore": "集群恢复",
+            "backup": "集群备份",
+        }
+        return operation_name[self.operation]
+
+    def get_content(self, success):
+        cluster = self.get_cluster()
+        content = {
+            "item_name": cluster.item_name,
+            "resource": "集群",
+            "resource_name": cluster.name,
+            "resource_type": 'CLUSTER',
+            "detail": self.get_msg_detail(success),
+            "status": cluster.status
+        }
+        return content
+
+    def get_msg_detail(self, success):
+        operation = self.get_operation_name()
+        if success:
+            result = "成功"
+        else:
+            result = "失败"
+        return json.dumps({"message": operation + result})

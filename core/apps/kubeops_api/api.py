@@ -48,6 +48,17 @@ class ClusterViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
+        if request.user.is_superuser is False:
+            can_delete = False
+            item_resource = ItemResource.objects.filter(resource_id=instance.id,
+                                                        resource_type=ItemResource.RESOURCE_TYPE_CLUSTER)
+            if item_resource:
+                role_mappings = ItemRoleMapping.objects.filter(profile__id=request.user.profile.id,
+                                                               item_id=item_resource[0].item_id)
+                if len(role_mappings) > 0 and role_mappings[0].role == ItemRoleMapping.ITEM_ROLE_MANAGER:
+                    can_delete = True
+            if can_delete is False:
+                return Response(data={'msg': '当前用户没有删除权限'}, status=status.HTTP_400_BAD_REQUEST)
         if not instance.status == Cluster.CLUSTER_STATUS_READY and not instance.status == Cluster.CLUSTER_STATUS_ERROR:
             return Response(data={'msg': '集群处于: {} 状态,不可删除'.format(instance.status)},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -74,8 +85,11 @@ class ClusterViewSet(viewsets.ModelViewSet):
                 item_ids = Item.objects.all().values_list("id")
                 resource_ids = ItemResource.objects.filter(item_id__in=item_ids).values_list("resource_id")
             else:
-                item = Item.objects.get(name=itemName)
-                resource_ids = ItemResource.objects.filter(item_id=item.id).values_list("resource_id")
+                try:
+                    item = Item.objects.get(name=itemName)
+                    resource_ids = ItemResource.objects.filter(item_id=item.id).values_list("resource_id")
+                except Item.DoesNotExist:
+                    resource_ids = []
             self.queryset = Cluster.objects.filter(id__in=resource_ids)
             return super().list(self, request, *args, **kwargs)
         elif user.profile.items:
@@ -85,7 +99,10 @@ class ClusterViewSet(viewsets.ModelViewSet):
             resource_ids = ItemResource.objects.filter(item_id__in=item_ids).values_list("resource_id")
             self.queryset = Cluster.objects.filter(id__in=resource_ids)
             return super().list(self, request, *args, **kwargs)
+        elif user.is_superuser:
+            return super().list(self, request, *args, **kwargs)
         else:
+            self.queryset = []
             return super().list(self, request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
@@ -455,6 +472,11 @@ class DashBoardView(APIView):
         warn_containers = []
         error_loki_containers = []
         error_pods = []
+
+        if len(request.user.profile.items) == 0 and request.user.is_superuser is False:
+            return Response(data={'data': cluster_data, 'warnContainers': warn_containers, 'restartPods': restart_pods,
+                                  'errorLokiContainers': error_loki_containers, 'errorPods': error_pods})
+
         if project_name == 'all':
             item_ids = []
             if item_name == 'all':
@@ -495,11 +517,15 @@ class DashBoardView(APIView):
 class SettingView(APIView):
 
     def get(self, request, *args, **kwargs):
-        return JsonResponse(Setting.get_settings())
+        params = request.query_params
+        tab = params.get("tab", None)
+        return JsonResponse(Setting.get_settings(tab))
 
     def post(self, request, *args, **kwargs):
+        params = request.query_params
+        tab = params.get("tab", None)
         settings = request.data
-        Setting.set_settings(settings)
+        Setting.set_settings(settings, tab)
         return Response(settings, status=status.HTTP_201_CREATED)
 
 

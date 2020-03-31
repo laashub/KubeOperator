@@ -42,6 +42,7 @@ def scale_compute_resource(cluster, num):
     for host_dict in change_list:
         host = Host.objects.get(name=host_dict['name'])
         if delete:
+            ItemResource.objects.filter(resource_id=host.id.hex).delete()
             host.delete()
         if add:
             cluster.add_to_new_node(host.node)
@@ -205,5 +206,5 @@ def delete_hosts(cluster):
         cluster.change_to()
         nodes = Node.objects.filter(~Q(name__in=['::1', '127.0.0.1', 'localhost']))
         for node in nodes:
+            ItemResource.objects.filter(resource_id=node.host.id.hex).delete()
             node.host.delete()
-            ItemResource.objects.filter(resource_id=node.host.id).delete()

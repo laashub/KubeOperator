@@ -35,8 +35,10 @@ class ItemViewSet(viewsets.ModelViewSet):
             for item in user.profile.items:
                 item_ids.append(item.id)
             self.queryset = Item.objects.filter(id__in=item_ids).order_by('-date_created')
-        else:
+        elif user.is_superuser:
             self.queryset = Item.objects.all().order_by('-date_created')
+        else:
+            self.queryset = []
         return super().list(self, request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
@@ -96,9 +98,9 @@ class ItemResourceView(APIView):
             resources.append(resource.__dict__)
         ceph = CephStorage.objects.filter(id__in=resource_ids)
         for c in ceph:
-            resource = Resource(resource_id=c.id, resource_type=ItemResource.RESOURCE_TYPE_STORAGE, data=n,
+            resource = Resource(resource_id=c.id, resource_type=ItemResource.RESOURCE_TYPE_STORAGE, data=c,
                                 checked=True)
-            resources.append(resource)
+            resources.append(resource.__dict__)
 
         response = HttpResponse(content_type='application/json')
         response.write(json.dumps(resources, cls=JsonResourceEncoder))

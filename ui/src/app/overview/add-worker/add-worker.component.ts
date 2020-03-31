@@ -3,6 +3,7 @@ import {HostService} from '../../host/host.service';
 import {Host} from '../../host/host';
 import {NgForm} from '@angular/forms';
 import {Cluster} from '../../cluster/cluster';
+import {Profile} from '../../shared/session-user';
 
 @Component({
   selector: 'app-add-worker',
@@ -15,22 +16,34 @@ export class AddWorkerComponent implements OnInit {
   }
 
   hosts: Host[] = [];
-  host: string;
+  options: any[] = [];
+  host_names: string[];
   opened = false;
   @Output() openedChange = new EventEmitter();
   @Output() confirm = new EventEmitter();
   @ViewChild('form', {static: true}) form: NgForm;
   @Input() currentCluster: Cluster;
+  ops: any = {
+    multiple: true,
+    placeholder: '选择节点',
+    escapeMarkup: function (markup) {
+      return markup;
+    },
+    templateSelection: (data) => {
+      return `<span class="label label-blue select2-selection__choice__remove">${data['text']}</span>`;
+    },
+  };
 
 
   ngOnInit() {
   }
 
   loadHosts() {
-    this.hostService.listItemHosts(this.currentCluster.item_name).subscribe(data => {
+    this.hostService.byItem(this.currentCluster.item_name).subscribe(data => {
       this.hosts = data.filter(host => {
         return !host.cluster;
       });
+      this.options = this.toOptions(this.hosts);
     });
   }
 
@@ -41,5 +54,13 @@ export class AddWorkerComponent implements OnInit {
 
   onConfirm() {
     this.confirm.emit();
+  }
+
+  private toOptions(hosts: Host[]): any[] {
+    const options = [];
+    hosts.forEach(h => {
+      options.push({'id': h.id, 'text': h.name, 'value': h.name});
+    });
+    return options;
   }
 }

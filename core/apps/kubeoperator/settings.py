@@ -5,15 +5,14 @@ KubeOperator  配置文件
 import os
 import datetime
 from celery.schedules import crontab
-# Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 from cmreslogging.handlers import CMRESHandler
-
 from .conf import load_user_config
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ANSIBLE_PROJECTS_DIR = os.path.join(BASE_DIR, 'data', 'ansible', 'projects')
 TERRAFORM_DIR = os.path.join(BASE_DIR, 'data', 'terraform', 'projects')
 BASE_LOG_DIR = os.path.join(BASE_DIR, "data", "log")
+MEDIA_DIR = os.path.join(BASE_DIR, "data", "media")
 VERSION_DIR = os.path.join(BASE_DIR, "build", "version")
 CLOUDS_RESOURCE_DIR = os.path.join(BASE_DIR, "resource", "clouds")
 CLUSTER_CONFIG_DIR = os.path.join(BASE_DIR, "resource", "cluster")
@@ -24,19 +23,12 @@ PACKAGE_PATH_PREFIX = "/opt/kubeoperator/data/packages/"
 PACKAGE_DIR = "/data/packages"
 CONFIG = load_user_config()
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/2.1/howto/deployment/checklist/
-
-# SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = CONFIG.SECRET_KEY
-
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = CONFIG.DEBUG
-
 ALLOWED_HOSTS = ['*']
 
-# Application definition
 INSTALLED_APPS = [
+    'message_center.apps.MessageCenterConfig',
     'storage.apps.StorageConfig',
     'kubeops_api.apps.KubeOperatorApiConfig',
     'cloud_provider.apps.CloudProviderConfig',
@@ -74,7 +66,7 @@ ASGI_APPLICATION = 'kubeoperator.routing.application'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(os.path.dirname(__file__), 'templates').replace('\\', '/'), ],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -87,9 +79,6 @@ TEMPLATES = [
     },
 ]
 
-# Database
-# https://docs.djangoproject.com/en/2.1/ref/settings/#databases
-# read conf
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
@@ -101,8 +90,6 @@ DATABASES = {
     }
 }
 
-# Password validation
-# https://docs.djangoproject.com/en/2.1/ref/settings/#auth-password-validators
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -117,22 +104,6 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
-
-# Internationalization
-# https://docs.djangoproject.com/en/2.1/topics/i18n/
-
-LANGUAGE_CODE = 'en-us'
-
-TIME_ZONE = 'UTC'
-
-USE_I18N = True
-
-USE_L10N = True
-
-USE_TZ = True
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/2.1/howto/static-files/
 
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, "data", "static")
@@ -245,35 +216,56 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'formatter': 'default'
         },
-        # 'elasticsearch': {
-        #     'level': 'INFO',
-        #     'class': 'cmreslogging.handlers.CMRESHandler',
-        #     'hosts': [{'host': ELASTICSEARCH_HOST, 'port': ELASTICSEARCH_PORT}],
-        #     'es_index_name': 'kubeoperator',
-        #     'index_name_frequency': CMRESHandler.IndexNameFrequency.MONTHLY,
-        #     'auth_type': CMRESHandler.AuthType.NO_AUTH,
-        #     'use_ssl': False,
-        # },
+        'elasticsearch': {
+            'level': 'INFO',
+            'class': 'cmreslogging.handlers.CMRESHandler',
+            'hosts': [{'host': ELASTICSEARCH_HOST, 'port': ELASTICSEARCH_PORT}],
+            'es_index_name': 'ko-log',
+            'index_name_frequency': CMRESHandler.IndexNameFrequency.MONTHLY,
+            'auth_type': CMRESHandler.AuthType.NO_AUTH,
+            'use_ssl': False,
+        },
     },
     'loggers': {
         "": {
             'handlers': ['console'],
             'level': 'INFO',
         },
-        # 'user': {
-        #     'handlers': ['console', 'elasticsearch'],
-        #     'level': 'INFO',
-        # },
-        # 'kubeops': {
-        #     'handlers': ['console', 'elasticsearch'],
-        #     'level': 'INFO',
-        # },
-        # 'cloud_provider': {
-        #     'handlers': ['console', 'elasticsearch'],
-        #     'level': 'INFO',
-        # },
+        'user': {
+            'handlers': ['console', 'elasticsearch'],
+            'level': 'INFO',
+        },
+        'cluster': {
+            'handlers': ['console', 'elasticsearch'],
+            'level': 'INFO',
+        },
+        'host': {
+            'handlers': ['console', 'elasticsearch'],
+            'level': 'INFO',
+        },
+        'log': {
+            'handlers': ['console', 'elasticsearch'],
+            'level': 'INFO',
+        },
+        'cloud_provider': {
+            'handlers': ['console', 'elasticsearch'],
+            'level': 'INFO',
+        },
     },
 }
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend', 'users.authentication.ldap.LDAPAuthorizationBackend'
+]
+
+AUTH_LDAP_ENABLE = False
+AUTH_LDAP_START_TLS = False
+AUTH_LDAP_CONNECT_TIMEOUT = 30,
+AUTH_LDAP_SEARCH_PAGED_SIZE = 10000,
+AUTH_LDAP_SYNC_IS_PERIODIC = False
+AUTH_LDAP_SYNC_INTERVAL = None
+AUTH_LDAP_SYNC_CRONTAB = None
+AUTH_LDAP_USER_LOGIN_ONLY_IN_USERS = False
+AUTH_LDAP_OPTIONS_OPT_REFERRALS = -1
 
 NODE_CREDENTIAL = {
     'username': "root",

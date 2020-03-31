@@ -2,6 +2,7 @@ import {Component, EventEmitter, Input, OnInit, Output} from '@angular/core';
 import {ItemMemberService} from '../item-member.service';
 import {Profile} from '../../shared/session-user';
 import {ActivatedRoute} from '@angular/router';
+import {SessionService} from '../../shared/session.service';
 
 const ROLE_NAME_MANAGER = 'MANAGER';
 const ROLE_NAME_VIEWER = 'VIEWER';
@@ -25,6 +26,7 @@ export class ItemMemberCreateComponent implements OnInit {
   managers = [];
   viewers = [];
   itemName: string;
+  profile: Profile;
   ops: any = {
     multiple: true,
     placeholder: '选择用户',
@@ -52,10 +54,11 @@ export class ItemMemberCreateComponent implements OnInit {
     });
   }
 
-  constructor(private itemMemberService: ItemMemberService, private route: ActivatedRoute) {
+  constructor(private itemMemberService: ItemMemberService, private route: ActivatedRoute, private session: SessionService) {
   }
 
   ngOnInit() {
+    this.profile = this.session.getCacheProfile();
     this.currentItem = this.route.snapshot.queryParams['name'];
   }
 

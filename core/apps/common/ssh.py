@@ -16,7 +16,6 @@ class SshConfig:
         self.port = port or 22
         self.username = username
         self.password = password
-        self.timeout = 10
         self.private_key = private_key
 
 
@@ -25,8 +24,8 @@ class SSHClient:
         self.config = config
 
     def run_cmd(self, cmd):
+        client = paramiko.SSHClient()
         try:
-            client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             client.connect(
                 self.config.host,
@@ -47,6 +46,8 @@ class SSHClient:
             return result, exit_code
         except SSHException as e:
             print("[%s] %s target failed, the reason is %s" % (datetime.datetime.now(), self.config.host, str(e)))
+        finally:
+            client.close()
 
     def ping(self):
         try:

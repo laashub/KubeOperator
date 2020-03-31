@@ -5,6 +5,7 @@ import shutil
 
 import requests
 import yaml
+from django.core.cache import cache
 from django.db import models
 
 import kubeops_api
@@ -144,6 +145,15 @@ class Cluster(Project):
         item_resource = ItemResource.objects.get(resource_id=self.id)
         if item_resource:
             return Item.objects.get(id=item_resource.item_id).name
+        else:
+            return None
+
+    @property
+    def item_id(self):
+        self.change_to()
+        item_resource = ItemResource.objects.get(resource_id=self.id)
+        if item_resource:
+            return Item.objects.get(id=item_resource.item_id).id
         else:
             return None
 
@@ -314,15 +324,27 @@ class Cluster(Project):
         node.set_groups(group_names=[role])
         return node
 
-    def add_worker(self, host):
+    def add_worker(self, hosts):
         num = len(self.current_workers)
-        node = Node.objects.create(
-            name="worker{}.{}.{}".format(num + 1, self.name, self.cluster_doamin_suffix),
-            host=host,
-            project=self
-        )
-        node.set_groups(group_names=['worker', 'new_node'])
-        return node
+        nodes = []
+        for host in hosts:
+            num += 1
+            name = "worker{}.{}.{}".format(num, self.name, self.cluster_doamin_suffix)
+            while True:
+                q = Node.objects.filter(name=name)
+                if q:
+                    num += 1
+                    name = "worker{}.{}.{}".format(num, self.name, self.cluster_doamin_suffix)
+                else:
+                    break
+            node = Node.objects.create(
+                name=name,
+                host=host,
+                project=self
+            )
+            node.set_groups(group_names=['worker', 'new_node'])
+            nodes.append(node)
+        return nodes
 
     def create_resource(self):
         create_compute_resource(self)
@@ -344,12 +366,15 @@ class Cluster(Project):
         return self.group_set.get(name='master').hosts.first()
 
     def get_cluster_token(self):
-        token = None
         if self.status == Cluster.CLUSTER_STATUS_RUNNING:
-            self.change_to()
-            master = self.group_set.get(name='master').hosts.first()
-            token = get_cluster_token(master)
-        return token
+            cache_key = "token-{}".format(self.id)
+            token = cache.get(cache_key)
+            if not token:
+                self.change_to()
+                master = self.group_set.get(name='master').hosts.first()
+                token = get_cluster_token(master)
+                cache.set(cache_key, token)
+            return token
 
     def delete_data(self):
         path = os.path.join(ANSIBLE_PROJECTS_DIR, self.name)
